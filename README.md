@@ -23,11 +23,12 @@ These two paths make up the two mandatory positional arguments to vendorize.
 Run the tool in "dry run" mode with the `-n` switch. This will give you a log of what *would*
 happen, but does not actually make any changes to your package:
 
-    $ vendorize -n github.com/kisiel/errcheck github.com/kisielk/errcheck/3rdparty
-    2013/10/06 22:24:21 copying contents of "/Users/kamil/src/code.google.com/p/go.tools/go/exact" to "/Users/kamil/src/github.com/kisielk/errcheck/3rdparty/code.google.com/p/go.tools/go/exact"
-    2013/10/06 22:24:21 copying contents of "/Users/kamil/src/code.google.com/p/go.tools/go/types" to "/Users/kamil/src/github.com/kisielk/errcheck/3rdparty/code.google.com/p/go.tools/go/types"
-    2013/10/06 22:24:21 copying contents of "/Users/kamil/src/honnef.co/go/importer" to "/Users/kamil/src/github.com/kisielk/errcheck/3rdparty/honnef.co/go/importer"
-    2013/10/06 22:24:21 copying contents of "/Users/kamil/src/github.com/kisielk/gotool" to "/Users/kamil/src/github.com/kisielk/errcheck/3rdparty/github.com/kisielk/gotool"
+	$ vendorize -n -i ignored.directory.com/ github.com/project/repo github.com/project/repo/_vendor/src
+	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/andybons/hipchat" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/andybons/hipchat"
+	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/cactus/go-statsd-client/statsd" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/cactus/go-statsd-client/statsd"
+	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/codegangsta/inject" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/codegangsta/inject"
+	2014/08/14 10:43:09 Ignored (preexisting): "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/go-martini/martini"
+	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/mipearson/rfw" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/mipearson/rfw"
 
 If you are satisfied, simply remove the `-n` switch to have vendorize copy the
 dependencies and rewrite your package's import statements.
@@ -36,19 +37,25 @@ If you want to exclude some paths from being vendorized, specify the prefix
 with the `-i` flag. The flag can be given multiple times to ignore multiple
 prefixes.
 
-In the example above, we trust the github.com/kisielk import prefix and the honnef.co/go/importer
-package to remain stable, but I want to keep errcheck from breaking when there are API changes
-in go.tools, a relatively unstable repository. We can ignore `github.com/kisielk` and
-`honnef.co` to get the desired result:
+The vendorize tool won't overwrite packages that are already present in the vendorize
+destination directory. To force it to do so, use the `-f` flag:
 
-    $ vendorize -n -ignore github.com/kisielk/ -ignore honnef.co/ github.com/kisiel/errcheck github.com/kisielk/errcheck/3rdparty
-    2013/10/06 22:28:05 copying contents of "/Users/kamil/src/code.google.com/p/go.tools/go/exact" to "/Users/kamil/src/github.com/kisielk/errcheck/3rdparty/code.google.com/p/go.tools/go/exact"
-    2013/10/06 22:28:05 copying contents of "/Users/kamil/src/code.google.com/p/go.tools/go/types" to "/Users/kamil/src/github.com/kisielk/errcheck/3rdparty/code.google.com/p/go.tools/go/types"
+	$ vendorize -n -i ignored.directory.com/ github.com/project/repo github.com/project/repo/_vendor/src
+	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/andybons/hipchat" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/andybons/hipchat"
+	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/cactus/go-statsd-client/statsd" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/cactus/go-statsd-client/statsd"
+	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/codegangsta/inject" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/codegangsta/inject"
+	2014/08/14 10:43:09 Copying contents of "$GOPATH/src/github.com/go-martini/martini" to $GOPATH/src/github.com/project/repo/_vendor/src/github.com/go-martini/martini"
+	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/mipearson/rfw" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/mipearson/rfw"
 
-Once the `-n` flag flag is removed, the libraries will be copied to the given location and import statements
-will be rewritten to point to their new import paths.
+Once the `-n` flag flag is removed, the libraries will be copied to the given location.
 
-TODO:
+Currently, there are two "best practice" approaches to vendorizing 
+a package. Peter Bourgon's excellent blog post on Go in production
+covers both in detail (scroll down to Dependency Management):
 
-`-u`
-`-f`
+	http://peter.bourgon.org/go-in-production/
+
+In support of these approaches, vendorize won't update import statements
+without a flag to indicate that it should do so. Add `-u` to update
+all the import statements for a vendorized package.
+
