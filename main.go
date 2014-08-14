@@ -17,27 +17,56 @@ import (
 )
 
 var (
-	fake     bool
-	rewrites map[string]string // rewrites that have been performed
-	visited  map[string]bool   // packages that have already been visited
-	gopath   string            // the last component of GOPATH
+	dry           bool
+	rewrites      map[string]string // rewrites that have been performed
+	visited       map[string]bool   // packages that have already been visited
+	gopath        string            // the last component of GOPATH
+	verbose       bool              // flag to indicate verbose output
+	forceUpdates  bool              // flag to force updating packages already vendorized
+	updateImports bool              // flag to specify that imports should be updated in files
 )
 
+// stringSliceFlag is a flag.Value that accumulates multiple flags in to a slice.
+type stringSliceFlag []string
+
+// formats the stringSliceFlag
+func (s *stringSliceFlag) String() string {
+	return fmt.Sprintf("%v", []string(*s))
+}
+
+func (s *stringSliceFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
+// package prefixes that should not be copied
+var ignorePrefixes stringSliceFlag
+
+// builtPackages maintains a cache of package builds.
+var builtPackages map[string]*build.Package
+
 func main() {
-	flag.BoolVar(&fake, "n", false, "If true, don't actually do anything")
+	flag.BoolVar(&dry, "n", false, "If true, perform a dry run but don't execute anything.")
 	flag.BoolVar(&verbose, "v", false, "Provide verbose output")
-	flag.Var(&ignorePrefixes, "ignore", "Package prefix to ignore. Can be given multiple times.")
+	flag.Var(&ignorePrefixes, "i", "Package prefix to ignore. Can be given multiple times.")
+	flag.BoolVar(&forceUpdates, "f", false, "If true, forces updates on already vendorized packages.")
+	flag.BoolVar(&updateImports, "u", false, "If true, updates import statements for vendorized packages.")
 	flag.Parse()
 
+	// set the go path
 	gopaths := filepath.SplitList(os.Getenv("GOPATH"))
 	gopath = gopaths[len(gopaths)-1]
 	if gopath == "" {
 		log.Fatal("GOPATH must be set")
 	}
+
+	// set the package name from arguments
 	pkgName := flag.Arg(0)
 	if pkgName == "" {
 		log.Fatal("need a package name")
 	}
+
+	// set the destination from arguments
 	dest := flag.Arg(1)
 	if dest == "" {
 		log.Fatal("need a destination path")
@@ -54,12 +83,15 @@ func main() {
 	}
 }
 
+// vendorize the package located at path, placing copied files in dest
 func vendorize(path, dest string) error {
 	if visited[path] {
 		return nil
 	}
 
 	verbosef("vendorizing %s", path)
+
+	// build the package
 	rootPkg, err := buildPackage(path)
 	if err != nil {
 		return fmt.Errorf("couldn't import %s: %s", path, err)
@@ -68,6 +100,7 @@ func vendorize(path, dest string) error {
 		return fmt.Errorf("can't vendorize packages from GOROOT")
 	}
 
+	// get import statements
 	allImports := getAllImports(rootPkg)
 
 	var pkgs []*build.Package
@@ -84,6 +117,7 @@ func vendorize(path, dest string) error {
 		}
 	}
 
+	// Recursively vendorize imports
 	for _, pkg := range pkgs {
 		if pkg.ImportPath == path {
 			// Don't recurse into self.
@@ -97,37 +131,51 @@ func vendorize(path, dest string) error {
 
 	pkgDir := rootPkg.Dir
 
+	// only copy packages when they aren't ignored
 	if !ignored(path) {
 		newPath := dest + "/" + path
 		pkgDir = filepath.Join(gopath, "src", newPath)
-		err = copyDir(pkgDir, rootPkg.Dir)
-		if err != nil {
-			return fmt.Errorf("couldn't copy %s: %s", path, err)
+
+		// only overwrite files if specifically requested to do so
+		if forceUpdates || !exists(newPath) {
+			err = copyDir(pkgDir, rootPkg.Dir)
+			if err != nil {
+				return fmt.Errorf("couldn't copy %s: %s", path, err)
+			}
+			rewrites[path] = newPath
 		}
-		rewrites[path] = newPath
 	}
 
-	// Rewrite any import lines in the package.
-	for _, files := range [][]string{
-		rootPkg.GoFiles, rootPkg.CgoFiles, rootPkg.TestGoFiles, rootPkg.XTestGoFiles,
-	} {
-		for _, file := range files {
-			if len(rewrites) > 0 {
-				destFile := filepath.Join(pkgDir, file)
-				verbosef("rewriting imports in %q", destFile)
-				err := rewriteFile(destFile, filepath.Join(rootPkg.Dir, file), rewrites)
-				if err != nil {
-					return fmt.Errorf("%s: couldn't rewrite file %q: %s", path, file, err)
+	// Rewrite any import lines in the package, but only on request
+	if updateImports {
+		for _, files := range [][]string{
+			rootPkg.GoFiles, rootPkg.CgoFiles, rootPkg.TestGoFiles, rootPkg.XTestGoFiles,
+		} {
+			for _, file := range files {
+				if len(rewrites) > 0 {
+					destFile := filepath.Join(pkgDir, file)
+					verbosef("rewriting imports in %q", destFile)
+					err := rewriteFile(destFile, filepath.Join(rootPkg.Dir, file), rewrites)
+					if err != nil {
+						return fmt.Errorf("%s: couldn't rewrite file %q: %s", path, file, err)
+					}
 				}
 			}
 		}
 	}
+
 	visited[path] = true
 	return nil
 }
 
-// package prefixes that should not be copied
-var ignorePrefixes stringSliceFlag
+// checks for the existence of the file located at filepath
+func exists(filepath string) (bool, error) {
+	err := os.Stat(filepath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return err != nil, err
+}
 
 func ignored(path string) bool {
 	_, rewritten := rewrites[path]
@@ -163,7 +211,7 @@ func copyFile(dest, src string, perm os.FileMode) error {
 // copyDir non-recursively copies the contents of the src directory to dest.
 func copyDir(dest, src string) error {
 	log.Printf("copying contents of %q to %q", src, dest)
-	if !fake {
+	if !dry {
 		err := os.MkdirAll(dest, 0770)
 		if err != nil {
 			return fmt.Errorf("couldn't make destination directory", dest)
@@ -189,14 +237,14 @@ func copyDir(dest, src string) error {
 		}
 		destFile := filepath.Join(dest, relPath)
 		verbosef("copying %q to %q", path, destFile)
-		if fake {
+		if dry {
 			return nil
 		}
 		return copyFile(destFile, path, info.Mode().Perm())
 	})
 }
 
-// getAllImports returns a list of all import paths in the Go files of pkg.
+// returns a list of all import paths in the Go files of pkg.
 func getAllImports(pkg *build.Package) []string {
 	allImports := make(map[string]bool)
 	for _, imports := range [][]string{pkg.Imports, pkg.TestImports, pkg.XTestImports} {
@@ -211,9 +259,6 @@ func getAllImports(pkg *build.Package) []string {
 	return result
 }
 
-// builtPackages maintains a cache of package builds.
-var builtPackages map[string]*build.Package
-
 // buildPackage builds a package given by the path.
 func buildPackage(path string) (*build.Package, error) {
 	if builtPackages == nil {
@@ -224,7 +269,7 @@ func buildPackage(path string) (*build.Package, error) {
 	}
 
 	ctx := build.Default
-	// TODO(kisielk): support relative imports?
+
 	pkg, err := ctx.Import(path, "", 0)
 	if err != nil {
 		return nil, err
@@ -234,7 +279,7 @@ func buildPackage(path string) (*build.Package, error) {
 }
 
 func rewriteFile(dest, path string, m map[string]string) error {
-	if fake {
+	if dry {
 		return nil
 	}
 
@@ -269,21 +314,6 @@ func rewriteFileImports(path string, m map[string]string, w io.Writer) error {
 
 	return printer.Fprint(w, fset, f)
 }
-
-// stringSliceFlag is a flag.Value that accumulates multiple flags in to a slice.
-type stringSliceFlag []string
-
-func (s *stringSliceFlag) String() string {
-	return fmt.Sprintf("%v", []string(*s))
-}
-
-func (s *stringSliceFlag) Set(value string) error {
-	*s = append(*s, value)
-	return nil
-}
-
-// verbose controls the level of logging.
-var verbose bool
 
 // verbosef logs only if verbose is true.
 func verbosef(s string, args ...interface{}) {

@@ -33,7 +33,7 @@ If you are satisfied, simply remove the `-n` switch to have vendorize copy the
 dependencies and rewrite your package's import statements.
 
 If you want to exclude some paths from being vendorized, specify the prefix
-with the `-ignore` flag. The flag can be given multiple times to ignore multiple
+with the `-i` flag. The flag can be given multiple times to ignore multiple
 prefixes.
 
 In the example above, we trust the github.com/kisielk import prefix and the honnef.co/go/importer
@@ -47,3 +47,8 @@ in go.tools, a relatively unstable repository. We can ignore `github.com/kisielk
 
 Once the `-n` flag flag is removed, the libraries will be copied to the given location and import statements
 will be rewritten to point to their new import paths.
+
+TODO:
+
+`-u`
+`-f`
