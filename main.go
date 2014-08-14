@@ -63,13 +63,13 @@ func main() {
 	// set the package name from arguments
 	pkgName := flag.Arg(0)
 	if pkgName == "" {
-		log.Fatal("need a package name")
+		log.Fatal("Package name required")
 	}
 
 	// set the destination from arguments
 	dest := flag.Arg(1)
 	if dest == "" {
-		log.Fatal("need a destination path")
+		log.Fatal("Destination path required")
 	}
 
 	ignorePrefixes = append(ignorePrefixes, pkgName)
@@ -89,15 +89,15 @@ func vendorize(path, dest string) error {
 		return nil
 	}
 
-	verbosef("vendorizing %s", path)
+	verbosef("Vendorizing %s", path)
 
 	// build the package
 	rootPkg, err := buildPackage(path)
 	if err != nil {
-		return fmt.Errorf("couldn't import %s: %s", path, err)
+		return fmt.Errorf("Couldn't import %s: %s", path, err)
 	}
 	if rootPkg.Goroot {
-		return fmt.Errorf("can't vendorize packages from GOROOT")
+		return fmt.Errorf("Can't vendorize packages from GOROOT")
 	}
 
 	// get import statements
@@ -125,7 +125,7 @@ func vendorize(path, dest string) error {
 		}
 		err := vendorize(pkg.ImportPath, dest)
 		if err != nil {
-			return fmt.Errorf("couldn't vendorize %s: %s", pkg.ImportPath, err)
+			return fmt.Errorf("Couldn't vendorize %s: %s", pkg.ImportPath, err)
 		}
 	}
 
@@ -135,14 +135,16 @@ func vendorize(path, dest string) error {
 	if !ignored(path) {
 		newPath := dest + "/" + path
 		pkgDir = filepath.Join(gopath, "src", newPath)
-
 		// only overwrite files if specifically requested to do so
-		if forceUpdates || !exists(newPath) {
+		fileExists, _ := exists(pkgDir)
+		if forceUpdates || !fileExists {
 			err = copyDir(pkgDir, rootPkg.Dir)
 			if err != nil {
-				return fmt.Errorf("couldn't copy %s: %s", path, err)
+				return fmt.Errorf("Couldn't copy %s: %s", path, err)
 			}
 			rewrites[path] = newPath
+		} else {
+			log.Printf("Ignored (preexisting): %q", pkgDir)
 		}
 	}
 
@@ -154,7 +156,7 @@ func vendorize(path, dest string) error {
 			for _, file := range files {
 				if len(rewrites) > 0 {
 					destFile := filepath.Join(pkgDir, file)
-					verbosef("rewriting imports in %q", destFile)
+					verbosef("Rewriting imports in %q", destFile)
 					err := rewriteFile(destFile, filepath.Join(rootPkg.Dir, file), rewrites)
 					if err != nil {
 						return fmt.Errorf("%s: couldn't rewrite file %q: %s", path, file, err)
@@ -170,13 +172,14 @@ func vendorize(path, dest string) error {
 
 // checks for the existence of the file located at filepath
 func exists(filepath string) (bool, error) {
-	err := os.Stat(filepath)
+	_, err := os.Stat(filepath)
 	if os.IsNotExist(err) {
 		return false, nil
 	}
-	return err != nil, err
+	return err == nil, err
 }
 
+// determines if the path contains an ignored prefix
 func ignored(path string) bool {
 	_, rewritten := rewrites[path]
 	if rewritten {
@@ -210,11 +213,11 @@ func copyFile(dest, src string, perm os.FileMode) error {
 
 // copyDir non-recursively copies the contents of the src directory to dest.
 func copyDir(dest, src string) error {
-	log.Printf("copying contents of %q to %q", src, dest)
+	log.Printf("Copying contents of %q to %q", src, dest)
 	if !dry {
 		err := os.MkdirAll(dest, 0770)
 		if err != nil {
-			return fmt.Errorf("couldn't make destination directory", dest)
+			return fmt.Errorf("Couldn't make destination directory", dest)
 		}
 	}
 
@@ -236,7 +239,7 @@ func copyDir(dest, src string) error {
 			return err
 		}
 		destFile := filepath.Join(dest, relPath)
-		verbosef("copying %q to %q", path, destFile)
+		verbosef("Copying %q to %q", path, destFile)
 		if dry {
 			return nil
 		}
@@ -278,6 +281,7 @@ func buildPackage(path string) (*build.Package, error) {
 	return pkg, nil
 }
 
+// rewrites the file at path with new import statements
 func rewriteFile(dest, path string, m map[string]string) error {
 	if dry {
 		return nil
@@ -295,6 +299,7 @@ func rewriteFile(dest, path string, m map[string]string) error {
 	return os.Rename(f.Name(), dest)
 }
 
+// rewrites the file import statements to the new location
 func rewriteFileImports(path string, m map[string]string, w io.Writer) error {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
