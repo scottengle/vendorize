@@ -12,9 +12,9 @@ statements of all packages to point to the right place.
 How do I use it?
 ================
 
-First install vendorize using the standard `go get` command:
+First, install vendorize using the standard `go get` command:
 
-    $ go get github.com/kisielk/vendorize
+    $ go get github.com/scottengle/vendorize
 
 Next, select a project whose dependencies you want to vendorize.
 Select a package import path prefix where the dependencies will be copied.
@@ -59,3 +59,18 @@ In support of these approaches, vendorize won't update import statements
 without a flag to indicate that it should do so. Add `-u` to update
 all the import statements for a vendorized package.
 
+Differences from github.com/kisielk/vendorize
+=============================================
+
+This fork has a couple of major differences from the upstream repository
+it was forked from.
+
+Flag changes:
+
+- `-ignore` is now `-i`
+- `-f` and `-u` were added
+
+Behavioral Changes:
+
+- By default, vendorize won't overwrite packages that already exist in the destination directory
+- By default, vendorize won't update import statements to vendorized packages
