@@ -53,7 +53,7 @@ Currently, there are two "best practice" approaches to vendorizing
 a package. Peter Bourgon's excellent blog post on Go in production
 covers both in detail (scroll down to Dependency Management):
 
-[http://peter.bourgon.org/go-in-production/]
+http://peter.bourgon.org/go-in-production/
 
 In support of these approaches, vendorize won't update import statements
 without a flag to indicate that it should do so. Add `-u` to update
