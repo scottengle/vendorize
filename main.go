@@ -40,15 +40,15 @@ func (s *stringSliceFlag) Set(value string) error {
 }
 
 // package prefixes that should not be copied
-var ignorePrefixes stringSliceFlag
+var blacklistedPrefixes stringSliceFlag
 
 // builtPackages maintains a cache of package builds.
 var builtPackages map[string]*build.Package
 
 func main() {
-	flag.BoolVar(&dry, "n", false, "If true, perform a dry run but don't execute anything.")
+	flag.BoolVar(&dry, "d", false, "If true, perform a dry run but don't execute anything.")
 	flag.BoolVar(&verbose, "v", false, "Provide verbose output")
-	flag.Var(&ignorePrefixes, "i", "Package prefix to ignore. Can be given multiple times.")
+	flag.Var(&blacklistedPrefixes, "b", "Package prefix to blacklist. Can be given multiple times.")
 	flag.BoolVar(&forceUpdates, "f", false, "If true, forces updates on already vendorized packages.")
 	flag.BoolVar(&updateImports, "u", false, "If true, updates import statements for vendorized packages.")
 	flag.Parse()
@@ -72,8 +72,8 @@ func main() {
 		log.Fatal("Destination path required")
 	}
 
-	ignorePrefixes = append(ignorePrefixes, pkgName)
-	ignorePrefixes = append(ignorePrefixes, dest)
+	blacklistedPrefixes = append(blacklistedPrefixes, pkgName)
+	blacklistedPrefixes = append(blacklistedPrefixes, dest)
 	rewrites = make(map[string]string)
 	visited = make(map[string]bool)
 
@@ -185,7 +185,7 @@ func ignored(path string) bool {
 	if rewritten {
 		return true
 	}
-	for _, prefix := range ignorePrefixes {
+	for _, prefix := range blacklistedPrefixes {
 		if strings.HasPrefix(path, prefix) {
 			return true
 		}
