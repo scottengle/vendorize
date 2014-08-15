@@ -37,7 +37,7 @@ prefixes.
 The vendorize tool won't overwrite packages that are already present in the vendorize
 destination directory. To force it to do so, use the `-f` flag:
 
-	$ vendorize -d -b blacklisted.directory.com/ github.com/project/repo github.com/project/repo/_vendor/src
+	$ vendorize -d -f -b blacklisted.directory.com/ github.com/project/repo github.com/project/repo/_vendor/src
 	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/andybons/hipchat" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/andybons/hipchat"
 	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/cactus/go-statsd-client/statsd" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/cactus/go-statsd-client/statsd"
 	2014/08/14 11:09:09 Copying contents of "$GOPATH/src/github.com/codegangsta/inject" to "$GOPATH/src/github.com/project/repo/_vendor/src/github.com/codegangsta/inject"
