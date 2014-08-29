@@ -14,20 +14,27 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
-	dry           bool
-	rewrites      map[string]string // rewrites that have been performed
-	visited       map[string]bool   // packages that have already been visited
-	gopath        string            // the last component of GOPATH
-	verbose       bool              // flag to indicate verbose output
-	forceUpdates  bool              // flag to force updating packages already vendorized
-	updateImports bool              // flag to specify that imports should be updated in files
+	dry               bool
+	rewrites          map[string]string // rewrites that have been performed
+	visited           map[string]bool   // packages that have already been visited
+	gopath            string            // the last component of GOPATH
+	verbose           bool              // flag to indicate verbose output
+	forceUpdates      bool              // flag to force updating packages already vendorized
+	updateImports     bool              // flag to specify that imports should be updated in files
+	packagesRemaining int               // total number of packages remaining. used to track goroutines still in progress.
 )
 
 // stringSliceFlag is a flag.Value that accumulates multiple flags in to a slice.
 type stringSliceFlag []string
+
+type vendorizeResult struct {
+	path string
+	err  error
+}
 
 // formats the stringSliceFlag
 func (s *stringSliceFlag) String() string {
@@ -46,6 +53,9 @@ var blacklistedPrefixes stringSliceFlag
 var builtPackages map[string]*build.Package
 
 func main() {
+
+	start := time.Now()
+
 	flag.BoolVar(&dry, "d", false, "If true, perform a dry run but don't execute anything.")
 	flag.BoolVar(&verbose, "v", false, "Provide verbose output")
 	flag.Var(&blacklistedPrefixes, "b", "Package prefix to blacklist. Can be given multiple times.")
@@ -77,27 +87,53 @@ func main() {
 	rewrites = make(map[string]string)
 	visited = make(map[string]bool)
 
-	err := vendorize(pkgName, dest)
-	if err != nil {
-		log.Fatal(err)
+	ch := make(chan vendorizeResult)
+
+	packagesRemaining++
+	go vendorize(pkgName, dest, ch)
+
+	for packagesRemaining > 0 {
+		select {
+		case r := <-ch:
+
+			visited[r.path] = true
+			packagesRemaining--
+
+			if r.err != nil {
+				verbosef("[Packages Remaining: %d] %s\n", packagesRemaining, r.err.Error())
+			} else {
+				verbosef("[Packages Remaining: %d] Package vendorized %s\n", packagesRemaining, r.path)
+			}
+		}
 	}
+
+	log.Printf("Vendorized %d imports in %v", len(rewrites), time.Since(start))
 }
 
 // vendorize the package located at path, placing copied files in dest
-func vendorize(path, dest string) error {
-	if visited[path] {
-		return nil
-	}
+func vendorize(path, dest string, ch chan vendorizeResult) {
 
 	verbosef("Vendorizing %s", path)
+
+	result := vendorizeResult{path: path, err: nil}
+
+	if visited[path] {
+		result.err = fmt.Errorf("Path '%v' already visited... skipping", path)
+		ch <- result
+		return
+	}
 
 	// build the package
 	rootPkg, err := buildPackage(path)
 	if err != nil {
-		return fmt.Errorf("Couldn't import %s: %s", path, err)
+		result.err = fmt.Errorf("Couldn't import %s: %s", path, err)
+		ch <- result
+		return
 	}
 	if rootPkg.Goroot {
-		return fmt.Errorf("Can't vendorize packages from GOROOT")
+		result.err = fmt.Errorf("Can't vendorize packages from GOROOT")
+		ch <- result
+		return
 	}
 
 	// get import statements
@@ -110,7 +146,9 @@ func vendorize(path, dest string) error {
 		}
 		pkg, err := buildPackage(imp)
 		if err != nil {
-			return fmt.Errorf("%s: couldn't import %s: %s", path, imp, err)
+			result.err = fmt.Errorf("%s: couldn't import %s: %s", path, imp, err)
+			ch <- result
+			return
 		}
 		if !pkg.Goroot {
 			pkgs = append(pkgs, pkg)
@@ -123,9 +161,9 @@ func vendorize(path, dest string) error {
 			// Don't recurse into self.
 			continue
 		}
-		err := vendorize(pkg.ImportPath, dest)
-		if err != nil {
-			return fmt.Errorf("Couldn't vendorize %s: %s", pkg.ImportPath, err)
+		if !visited[pkg.ImportPath] {
+			packagesRemaining++
+			go vendorize(pkg.ImportPath, dest, ch)
 		}
 	}
 
@@ -140,11 +178,15 @@ func vendorize(path, dest string) error {
 		if forceUpdates || !fileExists {
 			err = copyDir(pkgDir, rootPkg.Dir)
 			if err != nil {
-				return fmt.Errorf("Couldn't copy %s: %s", path, err)
+				result.err = fmt.Errorf("Couldn't copy %s: %s", path, err)
+				ch <- result
+				return
 			}
 			rewrites[path] = newPath
 		} else {
-			log.Printf("Ignored (preexisting): %q", pkgDir)
+			result.err = fmt.Errorf("Ignored (preexisting): %q", pkgDir)
+			ch <- result
+			return
 		}
 	}
 
@@ -159,15 +201,17 @@ func vendorize(path, dest string) error {
 					verbosef("Rewriting imports in %q", destFile)
 					err := rewriteFile(destFile, filepath.Join(rootPkg.Dir, file), rewrites)
 					if err != nil {
-						return fmt.Errorf("%s: couldn't rewrite file %q: %s", path, file, err)
+						result.err = fmt.Errorf("%s: couldn't rewrite file %q: %s", path, file, err)
+						ch <- result
+						return
 					}
 				}
 			}
 		}
 	}
 
-	visited[path] = true
-	return nil
+	ch <- result
+	return
 }
 
 // checks for the existence of the file located at filepath
@@ -208,16 +252,17 @@ func copyFile(dest, src string, perm os.FileMode) error {
 	defer out.Close()
 
 	_, err = io.Copy(out, in)
+
 	return err
 }
 
 // copyDir non-recursively copies the contents of the src directory to dest.
 func copyDir(dest, src string) error {
-	log.Printf("Copying contents of %q to %q", src, dest)
+	verbosef("Copying contents of %q to %q", src, dest)
 	if !dry {
 		err := os.MkdirAll(dest, 0770)
 		if err != nil {
-			return fmt.Errorf("Couldn't make destination directory", dest)
+			return fmt.Errorf("Couldn't make destination directory %v", dest)
 		}
 	}
 
@@ -243,7 +288,18 @@ func copyDir(dest, src string) error {
 		if dry {
 			return nil
 		}
-		return copyFile(destFile, path, info.Mode().Perm())
+
+		doesExist, err := exists(destFile)
+
+		if err != nil {
+			return err
+		}
+
+		if !doesExist || forceUpdates {
+			copyFile(destFile, path, info.Mode().Perm())
+		}
+
+		return nil
 	})
 }
 
